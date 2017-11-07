@@ -1,0 +1,11 @@
+[package]
+name = "decorators"
+version = "0.1.0"
+authors = ["Virtuos86 <Virtuos86@yandex.ru>"]
+
+[dependencies]
+
+[lib]
+name = "decorators"
+path = "src/lib.rs"
+proc-macro = true
