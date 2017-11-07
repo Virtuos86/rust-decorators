@@ -146,7 +146,7 @@ macro_rules! get_func_args_list_from_their_source {
 pub fn decorators(
     decor_list: TokenStream, decorable: TokenStream) -> TokenStream {
     let decor_items = recursive_parsing_decor_list(&decor_list);
-    if decor_items.len() == 0 { return decorable; }; // `#[decorator]` && `#[decorator()]` forms
+    if decor_items.len() == 0 { return decorable; }; // `#[decorators]` && `#[decorators()]` forms
 
     let fn_definition = decorable.to_string();
     
@@ -187,14 +187,14 @@ pub fn decorators(
 
     let decors: &Vec<&str> = &decors.iter().map(|string| { if string == &base_func_name { generated_func_name }
                                                            else { string } }).collect();
-    let generated_func_source = String::from(format!(
+    let generated_func_source = format!(
         "fn {}{}{{ {}({}({}{} }}",
         base_func_name,
         base_func_signature,
         decors.join("("),
         generated_func_name,
         get_func_args_list_from_their_source!(base_func_arguments.unwrap()).join(","),
-        (0..decors.len() + 1).map(|_| ")").collect::<String>()));
-    final_source.push_str(&*generated_func_source);println!("{:?}", final_source);
+        (0..decors.len() + 1).map(|_| ")").collect::<String>());
+    final_source.push_str(&*generated_func_source);
     final_source.parse().unwrap()
 }
