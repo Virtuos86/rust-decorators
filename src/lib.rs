@@ -164,7 +164,7 @@ pub fn decorators(
                                           else { base_func_name }
                                        })
                                        .collect();
-    let generated_func_name = &*decors.join("_");
+    let generated_func_name = &*(decors.join("_") + "_" + base_func_name);
     let mut final_source = fn_definition.replacen(base_func_name, generated_func_name, 1);
     final_source.push_str("\n\n");
     
