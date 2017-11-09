@@ -13,6 +13,73 @@ use proc_macro::{TokenStream, TokenNode, Delimiter, Span, Term};
 #[derive(Debug)]
 struct Item(Span, Term);
 
+enum Where {
+    Begin,
+    End,
+}
+
+// macro instead function for a speed
+macro_rules! parse_term_pos {
+    ($item:expr, $where:path) => ({
+        let tag = match $where {
+            Where::Begin => "lo: BytePos(",
+            Where::End => "hi: BytePos(",
+        };
+        let span_string = format!("{:?}", $item.0);
+        let term_pos_string = span_string.split_at(
+            span_string.find(tag)
+                       .unwrap() + tag.len())
+                       .1;
+        let term_pos = term_pos_string.split_at(term_pos_string.find(")")
+                                                               .unwrap())
+                                                               .0
+                                                               .parse::<usize>()
+                                                               .unwrap();
+        term_pos
+    })
+}
+
+macro_rules! get_group_slice {
+    ($source:expr, $item:ident, $begin_pos:expr) => ({
+        let begin = parse_term_pos!($item, Where::Begin) - $begin_pos + 1;
+        let end = parse_term_pos!($item, Where::End) - $begin_pos - begin - 1;
+        let slice = $source.split_at(begin).1.split_at(end).0;
+        slice
+    })
+}
+
+macro_rules! get_func_args_list_from_their_source {
+    ($func_args_source:expr) => ({
+        let source = $func_args_source;
+        let split_by_colon = source.split(':').count() - 1;
+        let split_by_double_colon = source.split("::").count() - 1;
+        let capacity = if split_by_colon != split_by_double_colon { split_by_colon - 2*split_by_double_colon }
+                       else {0};
+        let mut args_list = Vec::with_capacity(capacity);
+        let mut temp = $func_args_source;
+        while temp.find(':').is_some() {
+            let colon_pos = temp.find(':').unwrap();
+            // Processing of qualified identifiers 
+            match temp.find("::") {
+                Some(pos) => {
+                    if pos == colon_pos {
+                        temp = temp.split_at(colon_pos + "::".len()).1;
+                        continue;
+                    };
+                },
+                None => ()
+            }
+            let (arg, temp_) = temp.split_at(colon_pos);
+            match arg.rfind(',') {
+                None => args_list.push(arg),
+                Some(pos) => args_list.push(arg.split_at(pos + 1).1)
+            }
+            temp = temp_.split_at(1).1;
+        }
+        args_list
+    })
+}
+
 fn recursive_parsing_decor_list(token_stream: &TokenStream) -> Vec<Item> {
     let mut items = Vec::new();
     for token_tree in token_stream.clone().into_iter() {
@@ -31,7 +98,7 @@ fn recursive_parsing_decor_list(token_stream: &TokenStream) -> Vec<Item> {
             },
             TokenNode::Op(character, _) => {
                 if character == ',' { continue }
-                else { panic!(format!("Error! Invalid input.\n         You need to use ',' instead {:?}", character)) }
+                else { panic!(format!("Error! Invalid input.\n         You need to use ',' instead {:?} as a separator", character)) }
             },
             TokenNode::Literal(_literal) => panic!(format!("{}{}{}", "Error! This thing - ", _literal, " - obviously unnecessary.")),
         };
@@ -91,57 +158,6 @@ fn recursive_parsing(token_stream: &TokenStream) -> Vec<Item> {
         items
 }
 
-enum Where {
-    Begin,
-    End,
-}
-
-// macro instead function for a speed
-macro_rules! parse_term_pos {
-    ($item:expr, $where:path) => ({
-        let tag = match $where {
-            Where::Begin => "lo: BytePos(",
-            Where::End => "hi: BytePos(",
-        };
-        let span_string = format!("{:?}", $item.0);
-        let term_pos_string = span_string.split_at(
-            span_string.find(tag)
-                       .unwrap() + tag.len())
-                       .1;
-        let term_pos = term_pos_string.split_at(term_pos_string.find(")")
-                                                               .unwrap())
-                                                               .0
-                                                               .parse::<usize>()
-                                                               .unwrap();
-        term_pos
-    })
-}
-
-macro_rules! get_group_slice {
-    ($source:expr, $item:ident, $begin_pos:expr) => ({
-        let begin = parse_term_pos!($item, Where::Begin) - $begin_pos + 1;
-        let end = parse_term_pos!($item, Where::End) - $begin_pos - begin - 1;
-        let slice = $source.split_at(begin).1.split_at(end).0;
-        slice
-    })
-}
-
-macro_rules! get_func_args_list_from_their_source {
-    ($func_args_source:expr) => ({
-        let mut args_list = Vec::with_capacity($func_args_source.split(':').count());
-        let mut temp = $func_args_source;
-        while temp.find(':').is_some() {
-            let (arg, temp_) = temp.split_at(temp.find(':').unwrap());
-            match arg.rfind(',') {
-                None => args_list.push(arg),
-                Some(pos) => args_list.push(arg.split_at(pos + 1).1)
-            }
-            temp = temp_.split_at(1).1;
-        }
-        args_list
-    })
-}
-
 #[proc_macro_attribute]
 pub fn decorators(
     decor_list: TokenStream, decorable: TokenStream) -> TokenStream {
@@ -172,7 +188,7 @@ pub fn decorators(
                                        .collect();
     let generated_func_name = &*(decors.join("_") + "_" + base_func_name);
     let mut final_source = fn_definition.replacen(base_func_name, generated_func_name, 1);
-    if is_pub.is_some() { final_source = final_source.split_at(4).1.into() }; // generated function should be private
+    if is_pub.is_some() { final_source = final_source.split_at("pub ".len()).1.into() }; // generated function should be private
     final_source.push_str("\n\n");
     
 
@@ -204,5 +220,6 @@ pub fn decorators(
         get_func_args_list_from_their_source!(base_func_arguments.unwrap()).join(","),
         (0..decors.len() + 1).map(|_| ")").collect::<String>());
     final_source.push_str(&*generated_func_source);
+    //println!("{:?}", final_source);
     final_source.parse().unwrap()
 }
