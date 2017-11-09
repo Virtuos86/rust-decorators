@@ -153,7 +153,13 @@ pub fn decorators(
     let decorable_items = recursive_parsing(&decorable);
     let mut decorable_items_iter = decorable_items.into_iter();
     let mut fn_item = decorable_items_iter.next().unwrap(); // "fn" term
-    if &fn_item.1.as_str() == &"pub" { fn_item = decorable_items_iter.next().unwrap(); };
+
+    let mut is_pub = None;
+    if &fn_item.1.as_str() == &"pub" {
+        is_pub = Some("pub ".len());
+        fn_item = decorable_items_iter.next().unwrap();
+    };
+
     let base_func_name_item = decorable_items_iter.next().unwrap();
     let base_func_name_term = &base_func_name_item.1;
     let base_func_name = base_func_name_term.as_str();
@@ -166,10 +172,11 @@ pub fn decorators(
                                        .collect();
     let generated_func_name = &*(decors.join("_") + "_" + base_func_name);
     let mut final_source = fn_definition.replacen(base_func_name, generated_func_name, 1);
+    if is_pub.is_some() { final_source = final_source.split_at(4).1.into() }; // generated function should be private
     final_source.push_str("\n\n");
     
 
-    let source_begin_pos = parse_term_pos!(&fn_item, Where::Begin);
+    let source_begin_pos = parse_term_pos!(&fn_item, Where::Begin) - { if is_pub.is_none() {0} else {is_pub.unwrap()} };
 
     let mut base_func_arguments: Option<&str> = None;
     let mut decorable_items = decorable_items_iter.collect::<Vec<Item>>();
@@ -188,7 +195,8 @@ pub fn decorators(
     let decors: &Vec<&str> = &decors.iter().map(|string| { if string == &base_func_name { generated_func_name }
                                                            else { string } }).collect();
     let generated_func_source = format!(
-        "fn {}{}{{ {}({}({}{} }}",
+        "{}fn {}{}{{ {}({}({}{} }}",
+        if is_pub.is_none() {""} else {"pub "},
         base_func_name,
         base_func_signature,
         decors.join("("),
