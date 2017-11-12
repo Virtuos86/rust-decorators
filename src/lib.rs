@@ -13,9 +13,21 @@ use proc_macro::{TokenStream, TokenNode, Delimiter, Span, Term};
 #[derive(Debug)]
 struct Item(Span, Term);
 
+#[derive(Debug, Clone)]
+struct DecoratorItem {
+    span: Span,
+    term: Term,
+    args: Vec<String>
+}
+
 enum Where {
     Begin,
-    End,
+    End
+}
+
+enum RecursionLevel {
+    Outer,
+    Inner
 }
 
 // macro instead function for a speed
@@ -80,27 +92,46 @@ macro_rules! get_func_args_list_from_their_source {
     })
 }
 
-fn recursive_parsing_decor_list(token_stream: &TokenStream) -> Vec<Item> {
-    let mut items = Vec::new();
-    for token_tree in token_stream.clone().into_iter() {
+fn recursive_parsing_decor_list(token_stream: &TokenStream, recursion_level: RecursionLevel) -> Vec<DecoratorItem> {
+    let mut items: Vec<DecoratorItem> = Vec::new();
+    for (i, token_tree) in token_stream.clone().into_iter().enumerate() {
         let token_item = token_tree.kind;
         match token_item {
             TokenNode::Group(Delimiter::Parenthesis, token_stream) => {
                 let token_stream = token_stream.clone();
-                for item in recursive_parsing_decor_list(&token_stream).into_iter() {
-                    items.push(item);
-                }
+                match recursion_level {
+                    RecursionLevel::Outer => {
+                        for item in recursive_parsing_decor_list(&token_stream, RecursionLevel::Inner).into_iter() {
+                            items.push(item);
+                        }
+                    },
+                    RecursionLevel::Inner => {
+                        // if a decorator has arguments
+                        for item in recursive_parsing_decor_list(&token_stream, RecursionLevel::Inner).into_iter() {
+                            if items[i - 1].args.len() > 0 {
+                                items[i - 1].args.push(item.term.as_str().to_owned());
+                            } else {
+                                items[i - 1].args = vec![item.term.as_str().to_owned()];
+
+                            };
+                        }
+                    }
+                };
             },
             TokenNode::Group(delimiter, _) => panic!(format!("Error! Invalid input.\n         May be you need to use `Delimiter::Parenthesis` (\"()\") instead `Delimiter::{:?}` (\"[]\")", delimiter)),
             TokenNode::Term(term) => {
-                let item = Item(token_tree.span, term);
-                items.push(item);
+                items.push(DecoratorItem { span: token_tree.span, term: term, args: Vec::new() });
             },
             TokenNode::Op(character, _) => {
                 if character == ',' { continue }
                 else { panic!(format!("Error! Invalid input.\n         You need to use ',' instead {:?} as a separator", character)) }
             },
-            TokenNode::Literal(_literal) => panic!(format!("{}{}{}", "Error! This thing - ", _literal, " - obviously unnecessary.")),
+            TokenNode::Literal(_literal) => {
+                match recursion_level {
+                    RecursionLevel::Inner => items.push(DecoratorItem { span: token_tree.span, term: Term::intern(&*format!("{}", _literal)), args: Vec::new() }),
+                    _ => panic!(format!("{}{}{}", "Error! This thing - ", _literal, " - obviously unnecessary."))
+                };
+            },
         };
     }
     items
@@ -161,7 +192,7 @@ fn recursive_parsing(token_stream: &TokenStream) -> Vec<Item> {
 #[proc_macro_attribute]
 pub fn decorators(
     decor_list: TokenStream, decorable: TokenStream) -> TokenStream {
-    let decor_items = recursive_parsing_decor_list(&decor_list);
+    let decor_items = recursive_parsing_decor_list(&decor_list, RecursionLevel::Outer);
     if decor_items.len() == 0 { return decorable; }; // `#[decorators]` && `#[decorators()]` forms
 
     let fn_definition = decorable.to_string();
@@ -179,14 +210,19 @@ pub fn decorators(
     let base_func_name_item = decorable_items_iter.next().unwrap();
     let base_func_name_term = &base_func_name_item.1;
     let base_func_name = base_func_name_term.as_str();
-    let decors: Vec<&str> = decor_items.iter()
+    let decors: Vec<String> = decor_items.iter()
                                        .map(|item| {
-                                          let decor = item.1.as_str();
-                                          if decor != "self" { decor }
-                                          else { base_func_name }
+                                           let decor = item.term.as_str();
+                                           if decor != "self" {
+                                               if item.args.len() > 0 {
+                                                   format!("{}({}", decor, item.args.join(", ") + ", " )
+                                               } else {
+                                                   format!("{}(", decor)
+                                               }
+                                           } else { format!("{}(", base_func_name) }
                                        })
                                        .collect();
-    let generated_func_name = &*(decors.join("_") + "_" + base_func_name);
+    let generated_func_name = &*(decors.iter().map(|decor| decor.split_at(decor.find('(').unwrap_or(decor.len())).0).collect::<Vec<&str>>().join("_") + "_" + base_func_name);
     let mut final_source = fn_definition.replacen(base_func_name, generated_func_name, 1);
     if is_pub.is_some() { final_source = final_source.split_at("pub ".len()).1.into() }; // generated function should be private
     final_source.push_str("\n\n");
@@ -211,11 +247,11 @@ pub fn decorators(
     let decors: &Vec<&str> = &decors.iter().map(|string| { if string == &base_func_name { generated_func_name }
                                                            else { string } }).collect();
     let generated_func_source = format!(
-        "{}fn {}{}{{ {}({}({}{} }}",
+        "{}fn {}{}{{ {}{}({}{} }}",
         if is_pub.is_none() {""} else {"pub "},
         base_func_name,
         base_func_signature,
-        decors.join("("),
+        decors.join(""),
         generated_func_name,
         get_func_args_list_from_their_source!(base_func_arguments.unwrap()).join(","),
         (0..decors.len() + 1).map(|_| ")").collect::<String>());
